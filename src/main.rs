@@ -7,7 +7,7 @@ use std::{io, path::PathBuf, process::ExitCode};
 
 use clap::{Parser, Subcommand};
 
-use protocol::State;
+use protocol::{Command, State};
 
 #[derive(Parser)]
 #[command(version, about = "A stopwatch for your terminal")]
@@ -26,6 +26,12 @@ enum Action {
     Daemon,
     /// Show the timer's current state and elapsed time
     Status,
+    /// Start or resume the timer
+    Start,
+    /// Pause the timer, keeping its elapsed time
+    Pause,
+    /// Clear the elapsed time and pause the timer
+    Reset,
 }
 
 fn main() -> ExitCode {
@@ -45,18 +51,21 @@ fn run() -> io::Result<()> {
         None => default_socket()?,
     };
 
-    match args.command {
-        Action::Daemon => daemon::run(&path),
-        Action::Status => {
-            let status = client::status(&path)?;
-            let state = match status.state {
-                State::Paused => "paused",
-                State::Running => "running",
-            };
-            println!("{state} {}ms", status.elapsed_ms);
-            Ok(())
-        }
-    }
+    let command = match args.command {
+        Action::Daemon => return daemon::run(&path),
+        Action::Status => Command::Status,
+        Action::Start => Command::Start,
+        Action::Pause => Command::Pause,
+        Action::Reset => Command::Reset,
+    };
+
+    let status = client::request(&path, command)?;
+    let state = match status.state {
+        State::Paused => "paused",
+        State::Running => "running",
+    };
+    println!("{state} {}ms", status.elapsed_ms);
+    Ok(())
 }
 
 fn default_socket() -> io::Result<PathBuf> {

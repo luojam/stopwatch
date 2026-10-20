@@ -6,7 +6,7 @@ use std::{
 
 use crate::protocol::{self, Command, IO_TIMEOUT, Response, Status};
 
-pub fn status(path: &Path) -> io::Result<Status> {
+pub fn request(path: &Path, command: Command) -> io::Result<Status> {
     let stream = UnixStream::connect(path).map_err(|error| {
         io::Error::new(
             error.kind(),
@@ -20,7 +20,7 @@ pub fn status(path: &Path) -> io::Result<Status> {
     stream.set_write_timeout(Some(IO_TIMEOUT))?;
 
     let mut connection = BufReader::new(stream);
-    protocol::write_message(connection.get_mut(), &Command::Status)?;
+    protocol::write_message(connection.get_mut(), &command)?;
 
     match protocol::read_message(&mut connection)? {
         Some(Response::Status(status)) => Ok(status),

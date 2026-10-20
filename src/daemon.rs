@@ -15,7 +15,7 @@ use crate::{
 
 pub fn run(path: &Path) -> io::Result<()> {
     let listener = bind(path)?;
-    let timer = Stopwatch::default();
+    let mut timer = Stopwatch::default();
     eprintln!("Listening on {}", path.display());
 
     for connection in listener.incoming() {
@@ -25,7 +25,7 @@ pub fn run(path: &Path) -> io::Result<()> {
             Err(error) => return Err(error),
         };
 
-        if let Err(error) = serve(stream, &timer) {
+        if let Err(error) = serve(stream, &mut timer) {
             eprintln!("client connection failed: {error}");
         }
     }
@@ -60,7 +60,7 @@ fn bind(path: &Path) -> io::Result<UnixListener> {
     Ok(listener)
 }
 
-fn serve(stream: UnixStream, timer: &Stopwatch) -> io::Result<()> {
+fn serve(stream: UnixStream, timer: &mut Stopwatch) -> io::Result<()> {
     stream.set_read_timeout(Some(IO_TIMEOUT))?;
     stream.set_write_timeout(Some(IO_TIMEOUT))?;
     let mut connection = BufReader::new(stream);
@@ -79,16 +79,21 @@ fn serve(stream: UnixStream, timer: &Stopwatch) -> io::Result<()> {
         Err(error) => return Err(error),
     };
 
-    let response = match command {
-        Command::Status => Response::Status(Status {
-            state: if timer.is_running() {
-                State::Running
-            } else {
-                State::Paused
-            },
-            elapsed_ms: timer.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
-        }),
-    };
+    match command {
+        Command::Status => {}
+        Command::Start => timer.start(),
+        Command::Pause => timer.pause(),
+        Command::Reset => timer.reset(),
+    }
+
+    let response = Response::Status(Status {
+        state: if timer.is_running() {
+            State::Running
+        } else {
+            State::Paused
+        },
+        elapsed_ms: timer.elapsed().as_millis().try_into().unwrap_or(u64::MAX),
+    });
 
     protocol::write_message(connection.get_mut(), &response)
 }

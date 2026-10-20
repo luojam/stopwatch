@@ -72,7 +72,7 @@ impl TestDaemon {
         }
     }
 
-    fn assert_status(&self) {
+    fn assert_paused_at_zero(&self) {
         let output = run(self.command().arg("status"));
         assert!(
             output.status.success(),
@@ -80,6 +80,19 @@ impl TestDaemon {
             String::from_utf8_lossy(&output.stderr)
         );
         assert_eq!(output.stdout, b"paused 0ms\n");
+    }
+
+    fn run_command(&self, action: &str) -> (String, u64) {
+        let output = run(self.command().arg(action));
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let (state, elapsed) = stdout.trim_end().split_once(' ').unwrap();
+        let elapsed_ms = elapsed.strip_suffix("ms").unwrap().parse().unwrap();
+        (state.to_owned(), elapsed_ms)
     }
 }
 
@@ -121,7 +134,67 @@ fn run(command: &mut Command) -> Output {
 fn new_daemon_reports_paused_at_zero() {
     let mut daemon = TestDaemon::new();
     daemon.start();
-    daemon.assert_status();
+    daemon.assert_paused_at_zero();
+}
+
+#[test]
+fn cli_controls_preserve_time_across_connections_and_reset_to_zero() {
+    let mut daemon = TestDaemon::new();
+    daemon.start();
+    let (state, elapsed_ms) = daemon.run_command("pause");
+    assert_eq!(state, "paused");
+    assert_eq!(elapsed_ms, 0);
+
+    let mut paused_elapsed = 0;
+    for _ in 0..2 {
+        let (state, elapsed_ms) = daemon.run_command("start");
+        assert_eq!(state, "running");
+        assert!(elapsed_ms >= paused_elapsed);
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let running_elapsed = loop {
+            let (state, elapsed) = daemon.run_command("status");
+            assert_eq!(state, "running");
+            if elapsed > paused_elapsed {
+                break elapsed;
+            }
+            assert!(Instant::now() < deadline, "timer did not advance");
+            thread::sleep(Duration::from_millis(10));
+        };
+
+        let (state, elapsed_ms) = daemon.run_command("start");
+        assert_eq!(state, "running");
+        assert!(elapsed_ms >= running_elapsed);
+
+        let (state, elapsed_ms) = daemon.run_command("pause");
+        assert_eq!(state, "paused");
+        paused_elapsed = elapsed_ms;
+        assert!(paused_elapsed >= running_elapsed);
+
+        let (state, elapsed_ms) = daemon.run_command("status");
+        assert_eq!(state, "paused");
+        assert_eq!(elapsed_ms, paused_elapsed);
+
+        let (state, elapsed_ms) = daemon.run_command("pause");
+        assert_eq!(state, "paused");
+        assert_eq!(elapsed_ms, paused_elapsed);
+    }
+
+    let (state, elapsed_ms) = daemon.run_command("reset");
+    assert_eq!(state, "paused");
+    assert_eq!(elapsed_ms, 0);
+    daemon.assert_paused_at_zero();
+
+    let (state, _) = daemon.run_command("start");
+    assert_eq!(state, "running");
+
+    let (state, elapsed_ms) = daemon.run_command("reset");
+    assert_eq!(state, "paused");
+    assert_eq!(elapsed_ms, 0);
+    daemon.assert_paused_at_zero();
+
+    let (state, _) = daemon.run_command("start");
+    assert_eq!(state, "running");
 }
 
 #[test]
@@ -150,7 +223,7 @@ fn rejects_a_second_daemon_without_disrupting_the_first() {
 
     let output = run(daemon.command().arg("daemon"));
     assert!(!output.status.success());
-    daemon.assert_status();
+    daemon.assert_paused_at_zero();
 }
 
 #[test]
@@ -191,10 +264,10 @@ fn bad_requests_and_disconnects_do_not_stop_the_daemon() {
 
     let mut remaining = String::new();
     assert_eq!(reader.read_line(&mut remaining).unwrap(), 0);
-    daemon.assert_status();
+    daemon.assert_paused_at_zero();
 
     drop(UnixStream::connect(&daemon.socket).unwrap());
-    daemon.assert_status();
+    daemon.assert_paused_at_zero();
 }
 
 #[test]

@@ -12,6 +12,9 @@ const MAX_MESSAGE_BYTES: u64 = 4096;
 #[serde(rename_all = "snake_case")]
 pub enum Command {
     Status,
+    Start,
+    Pause,
+    Reset,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
